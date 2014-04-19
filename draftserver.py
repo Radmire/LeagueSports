@@ -19,7 +19,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         """
         To validate a connection we take the cookie's sessionid and query for its ConnectionTicket
         If there is no cookie, close the connection
-        If there is no sessionid, close the connection
+        If there is no sessionid in the cookie, close the connection
         If there is no session associated with the sessionid, close the connection
         If there is no ConnectionTicket, close the connection
         Otherwise delete the ConnectionTicket and add the connection the appropriate pool
@@ -28,14 +28,16 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         cookie = self.request.headers.get('cookie')
         if cookie is NoneType:
             self.close()
-        split_cookie = cookie.split(';')
-        sessionIndex = [index for index, data in enumerate(split_cookie) if "sessionid" in data]
-        if len(sessionIndex) == 0:
+            
+        # Check for sessionid in cookie
+        cookie_dict = dict(item.split("=") for item in cookie.split(";"))
+        if not "sessionid" in cookie_dict.keys():
             self.close()
-        sessionid = split_cookie[sessionIndex[0]].split("=")[1]
         
-        print "Getting sessionid: " + sessionid
+        sessionid = cookie_dict.get("sessionid")
+        
         # Check if session id exists
+        print "Getting sessionid: " + sessionid
         try:
             session = Session.objects.get(session_key=sessionid)
             print "Session get successful"
@@ -43,8 +45,8 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             print "Session get failed"
             self.close()
         
+        # Check if there is a ConnectionTicket with the associated sessionid, if not: close
         print "Getting ticket"
-        # Check if there is a ConnectionTicket with the associated sessionid, if not close
         try:
             ticket = ConnectionTicket.objects.get(user_sessionid=session.session_key)
             self.user = ticket.user # Keep a reference to the current user
@@ -64,7 +66,7 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         print 'data received: %s' % data
         if len(data) < 2:
             return
-        
+        # If we receive league data, the connection should be in the connection buffer
         if data[0] == 'league':
             if self not in connection_buffer:
                 return
@@ -76,17 +78,14 @@ class WSHandler(tornado.websocket.WebSocketHandler):
             connection_buffer.remove(self)
             print "Added connection to pool: " + str(connections)
             
+            # Notify all connections in the pool of the new connection
+            # Notify the new connection of all the connections in the pool
             message = "join::" + str(self.user.username)
             for connection in connections[self.leagueid]:
                 if connection is not self:
                     connection.write_message(message)
                 self.write_message("join::"+str(connection.user.username))
         
-        if data[0] == 'join':
-            session = Session.objects.get(session_key=data[1])
-            print "Session: " + str(session)
-            self.write_message('Data Found!')
- 
     def on_close(self):
         # Remove this connection from the connections pool
         message = "leave::" + str(self.user.username)
